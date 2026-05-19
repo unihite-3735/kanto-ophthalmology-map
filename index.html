@@ -573,18 +573,60 @@ function toggleLegend(){
 </script>
 
 
+
+
+
 <script>
 (function(){
   let activeFacilityMarker = null;
   let facilityRings = [];
   let facilityRingLabels = [];
 
+  function isManagedRadiusLayer(layer){
+    if(typeof L === 'undefined') return false;
+
+    // 自分で作った円
+    if(layer && layer.__facilityRadiusLayer) return true;
+    if(layer && layer.__facilityRadiusLabel) return true;
+
+    // 元HTML側で作られた半径円も拾う
+    if(layer instanceof L.Circle){
+      const r = Math.round(layer.getRadius ? layer.getRadius() : 0);
+      if([500,1000,2000,3000].includes(r)) return true;
+    }
+
+    // 半径ラベル系 divIcon
+    if(layer instanceof L.Marker && layer.getIcon){
+      const icon = layer.getIcon();
+      const cls = icon && icon.options ? String(icon.options.className || '') : '';
+      const html = icon && icon.options ? String(icon.options.html || '') : '';
+      if(cls.includes('radius') || cls.includes('search-radius-label')) return true;
+      if(/500m|1km|2km|3km/.test(html)) return true;
+    }
+
+    return false;
+  }
+
   function clearFacilitySelection(){
     if(typeof map === 'undefined') return;
+
+    // 自分で保持しているレイヤーを削除
     facilityRings.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
     facilityRingLabels.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
     facilityRings = [];
     facilityRingLabels = [];
+
+    // 地図上に残った半径円・半径ラベルもまとめて削除
+    const removeTargets = [];
+    map.eachLayer(function(layer){
+      if(isManagedRadiusLayer(layer)){
+        removeTargets.push(layer);
+      }
+    });
+    removeTargets.forEach(layer=>{
+      try{map.removeLayer(layer)}catch(e){}
+    });
+
     try{ map.closePopup(); }catch(e){}
     activeFacilityMarker = null;
   }
@@ -602,12 +644,14 @@ function toggleLegend(){
 
   function drawFacilityRings(lat, lon){
     if(typeof L === 'undefined' || typeof map === 'undefined') return;
+
     const defs = [
       {m:500, label:'500m', color:'#2563eb', dash:'6 6'},
       {m:1000, label:'1km', color:'#111827', dash:null},
       {m:2000, label:'2km', color:'#111827', dash:null},
       {m:3000, label:'3km', color:'#111827', dash:null}
     ];
+
     defs.forEach(d=>{
       const circle = L.circle([lat,lon], {
         radius:d.m,
@@ -618,6 +662,7 @@ function toggleLegend(){
         opacity:.75,
         interactive:false
       }).addTo(map);
+      circle.__facilityRadiusLayer = true;
       facilityRings.push(circle);
 
       const pos = destinationPoint2(lat, lon, d.m, 90);
@@ -629,31 +674,44 @@ function toggleLegend(){
           iconSize:null
         })
       }).addTo(map);
+      label.__facilityRadiusLabel = true;
       facilityRingLabels.push(label);
     });
   }
 
+  function isAddressSearchMarker(marker){
+    const el = marker && marker.getElement ? marker.getElement() : null;
+    const inner = el ? String(el.innerHTML || '') : '';
+    return inner.includes('search-address-marker');
+  }
+
   function patchMarkerClick(marker){
     if(!marker || marker.__facilityTogglePatched) return;
+    if(isAddressSearchMarker(marker)) return;
+
     marker.__facilityTogglePatched = true;
 
-    marker.on('click', function(e){
+    marker.on('click', function(){
       const ll = marker.getLatLng ? marker.getLatLng() : null;
       if(!ll) return;
 
-      // 同じ施設を再タップしたら、ポップアップ＋円を消して未選択状態にする
       if(activeFacilityMarker === marker){
         clearFacilitySelection();
         return;
       }
 
-      // 別施設を押したら前の円を消して、新しい円を表示
       clearFacilitySelection();
       activeFacilityMarker = marker;
 
+      // 元HTML側の円が後から描かれる場合があるため、少し待ってから一度掃除→自前円描画
       setTimeout(function(){
+        const targets = [];
+        map.eachLayer(function(layer){
+          if(isManagedRadiusLayer(layer)) targets.push(layer);
+        });
+        targets.forEach(layer=>{try{map.removeLayer(layer)}catch(e){}});
         drawFacilityRings(ll.lat, ll.lng);
-      }, 0);
+      }, 80);
     });
   }
 
@@ -661,22 +719,17 @@ function toggleLegend(){
     if(typeof map === 'undefined' || typeof L === 'undefined') return;
     map.eachLayer(function(layer){
       if(layer instanceof L.Marker){
-        // 住所検索ピンは別ロジックがあるので対象外
-        const el = layer.getElement && layer.getElement();
-        const html = el ? el.innerHTML : '';
-        if(html && html.indexOf('search-address-marker') >= 0) return;
         patchMarkerClick(layer);
       }
     });
   }
 
   document.addEventListener('DOMContentLoaded', function(){
-    setTimeout(patchAllMarkers, 1000);
-    setTimeout(patchAllMarkers, 2500);
+    setTimeout(patchAllMarkers, 800);
+    setTimeout(patchAllMarkers, 2000);
   });
 
-  // フィルター・ズーム後にマーカーが再生成されることがあるため定期的に軽く再適用
-  setInterval(patchAllMarkers, 3000);
+  setInterval(patchAllMarkers, 2500);
 })();
 </script>
 
