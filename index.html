@@ -366,14 +366,35 @@ const TEXT={'白内障':'C','硝子体':'V','緑内障':'G','白内障＋硝子�
 function num(v){ if(v===undefined||v===null) return 0; return Number(String(v).replace(/,/g,''))||0; }
 function opClass(d){const c=num(d.cat)>0||String(d.cataract||'').includes('あり')||String(d.cls||'').includes('白内障');const v=num(d.vit)>0||String(d.vitrectomy||'').includes('あり')||String(d.cls||'').includes('硝子体');const g=num(d.gla)>0||String(d.glaucoma||'').includes('あり')||String(d.cls||'').includes('緑内障');if(c&&v&&g)return'白内障＋硝子体＋緑内障';if(c&&v)return'白内障＋硝子体';if(c&&g)return'白内障＋緑内障';if(v&&g)return'硝子体＋緑内障';if(c)return'白内障';if(v)return'硝子体';if(g)return'緑内障';if(String(d.cls||'').includes('オペ記載なし'))return'オペ記載なし';return'未分類'}
 DATA.forEach(d=>d.op=opClass(d));
-const INITIAL_CENTER=[35.68,139.76];const INITIAL_ZOOM=9;const map=L.map('map',{preferCanvas:true}).setView(INITIAL_CENTER,INITIAL_ZOOM);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);const cluster=L.markerClusterGroup({chunkedLoading:true,chunkInterval:80,chunkDelay:30,disableClusteringAtZoom:14,spiderfyOnMaxZoom:true,showCoverageOnHover:false}).addTo(map);const stationLayer=L.layerGroup().addTo(map);let allMarkers=[];let selectedCircle=null;let activeData=DATA.slice();let lastSearchStation=null;
+const INITIAL_CENTER=[35.68,139.76];const INITIAL_ZOOM=9;const map=L.map('map',{preferCanvas:true}).setView(INITIAL_CENTER,INITIAL_ZOOM);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);const cluster=L.markerClusterGroup({chunkedLoading:true,chunkInterval:80,chunkDelay:30,disableClusteringAtZoom:14,spiderfyOnMaxZoom:true,showCoverageOnHover:false}).addTo(map);const stationLayer=L.layerGroup().addTo(map);let allMarkers=[];let selectedCircle=null;let selectedMarker=null;let activeData=DATA.slice();let lastSearchStation=null;
 function normText(v){return String(v||'').toLowerCase().replace(/\s+/g,'').replace(/[‐‑‒–—―ー－]/g,'-').replace(/　/g,'').trim();}
 function stripStationSuffix(v){return normText(v).replace(/駅$/,'');}
 function stationIcon(){return L.divIcon({className:'',html:'<div class="station-dot"></div>',iconSize:[17,17],iconAnchor:[8,8]});}
 
 function iconFor(d){const c=COLORS[d.op]||'#666';const t=TEXT[d.op]||'?';const fg=d.op==='白内障＋緑内障'?'#111':'#fff';return L.divIcon({className:'',html:`<div class="marker-pin" style="background:${c};color:${fg}">${t}</div>`,iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-16]})}
 function popup(d){return `<div class="popup-title">${d.name||''}</div><table class="popup-table"><tr><th>分類</th><td>${d.op}</td></tr><tr><th>住所</th><td>${d.address||''}</td></tr><tr><th>最寄駅</th><td>${d.station||''} / ${d.line||''}</td></tr><tr><th>白内障</th><td>${d.cat||''}</td></tr><tr><th>硝子体</th><td>${d.vit||''}</td></tr><tr><th>緑内障</th><td>${d.gla||''}</td></tr></table>${d.hp?`<div style="margin-top:6px"><a href="${d.hp}" target="_blank">HP</a></div>`:''}`}
-function makeMarker(d){const m=L.marker([d.lat,d.lon],{icon:iconFor(d),title:d.name}).bindPopup(popup(d));m._data=d;m.on('click',()=>{if(selectedCircle){map.removeLayer(selectedCircle);selectedCircle=null;}selectedCircle=L.circle([d.lat,d.lon],{radius:1000,color:'#2563eb',weight:2,fillColor:'#2563eb',fillOpacity:.08}).addTo(map);});return m}
+function clearSelectedFacility(){
+  if(selectedCircle){map.removeLayer(selectedCircle);selectedCircle=null;}
+  selectedMarker=null;
+  try{map.closePopup();}catch(e){}
+}
+function makeMarker(d){
+  const m=L.marker([d.lat,d.lon],{icon:iconFor(d),title:d.name});
+  m._data=d;
+  m.bindPopup(popup(d));
+  m.on('click',()=>{
+    // 同じ施設をもう一度タップした場合：施設情報と青丸を両方消す
+    if(selectedMarker===m){
+      clearSelectedFacility();
+      return;
+    }
+    if(selectedCircle){map.removeLayer(selectedCircle);selectedCircle=null;}
+    selectedMarker=m;
+    selectedCircle=L.circle([d.lat,d.lon],{radius:1000,color:'#2563eb',weight:2,fillColor:'#2563eb',fillOpacity:.08}).addTo(map);
+    try{m.openPopup();}catch(e){}
+  });
+  return m;
+}
 function render(list){cluster.clearLayers();allMarkers=list.map(makeMarker);cluster.addLayers(allMarkers);updateLabels();updateStationLabels();}
 function updateLabels(){const on=document.getElementById('labelToggle').checked&&map.getZoom()>=14;allMarkers.forEach(m=>{const d=m._data;if(on)m.bindTooltip(d.name,{permanent:true,direction:'right',className:'facility-label',offset:[14,0]});else m.unbindTooltip();});}
 function updateStationLabels(){
@@ -431,6 +452,7 @@ function resetFilter(){
   activeData=DATA.slice();
   map.closePopup();
   if(selectedCircle){map.removeLayer(selectedCircle);selectedCircle=null;}
+  selectedMarker=null;
   stationLayer.clearLayers();
   render(activeData);
   map.setView(INITIAL_CENTER,INITIAL_ZOOM);
@@ -672,172 +694,11 @@ initSelects();render(DATA);
 
 
 
+
 <script>
-(function(){
-  let if(activeFacilityMarker){
-      try{ activeFacilityMarker.__selectedOnce = false; }catch(e){}
-    }
-    activeFacilityMarker = null;
-  let facilityRings = [];
-  let facilityRingLabels = [];
-
-  function isManagedRadiusLayer(layer){
-    if(typeof L === 'undefined') return false;
-
-    // 自分で作った円
-    if(layer && layer.__facilityRadiusLayer) return true;
-    if(layer && layer.__facilityRadiusLabel) return true;
-
-    // 元HTML側で作られた半径円も拾う
-    if(layer instanceof L.Circle){
-      const r = Math.round(layer.getRadius ? layer.getRadius() : 0);
-      if([500,1000,2000,3000].includes(r)) return true;
-    }
-
-    // 半径ラベル系 divIcon
-    if(layer instanceof L.Marker && layer.getIcon){
-      const icon = layer.getIcon();
-      const cls = icon && icon.options ? String(icon.options.className || '') : '';
-      const html = icon && icon.options ? String(icon.options.html || '') : '';
-      if(cls.includes('radius') || cls.includes('search-radius-label')) return true;
-      if(/500m|1km|2km|3km/.test(html)) return true;
-    }
-
-    return false;
-  }
-
-  function clearFacilitySelection(){
-    if(typeof map === 'undefined') return;
-
-    // 自分で保持しているレイヤーを削除
-    facilityRings.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
-    facilityRingLabels.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
-    facilityRings = [];
-    facilityRingLabels = [];
-
-    // 地図上に残った半径円・半径ラベルもまとめて削除
-    const removeTargets = [];
-    map.eachLayer(function(layer){
-      if(isManagedRadiusLayer(layer)){
-        removeTargets.push(layer);
-      }
-    });
-    removeTargets.forEach(layer=>{
-      try{map.removeLayer(layer)}catch(e){}
-    });
-
-    try{ map.closePopup(); }catch(e){}
-    activeFacilityMarker = null;
-  }
-
-  function destinationPoint2(lat, lon, distanceMeters, bearingDeg){
-    const R = 6378137;
-    const brng = bearingDeg * Math.PI / 180;
-    const phi1 = lat * Math.PI / 180;
-    const lambda1 = lon * Math.PI / 180;
-    const d = distanceMeters / R;
-    const phi2 = Math.asin(Math.sin(phi1)*Math.cos(d) + Math.cos(phi1)*Math.sin(d)*Math.cos(brng));
-    const lambda2 = lambda1 + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(phi1), Math.cos(d)-Math.sin(phi1)*Math.sin(phi2));
-    return [phi2*180/Math.PI, lambda2*180/Math.PI];
-  }
-
-  function drawFacilityRings(lat, lon){
-    if(typeof L === 'undefined' || typeof map === 'undefined') return;
-
-    const defs = [
-      {m:500, label:'500m', color:'#2563eb', dash:'6 6'},
-      {m:1000, label:'1km', color:'#111827', dash:null},
-      {m:2000, label:'2km', color:'#111827', dash:null},
-      {m:3000, label:'3km', color:'#111827', dash:null}
-    ];
-
-    defs.forEach(d=>{
-      const circle = L.circle([lat,lon], {
-        radius:d.m,
-        color:d.color,
-        weight:d.m===500 ? 3 : 2,
-        dashArray:d.dash,
-        fill:false,
-        opacity:.75,
-        interactive:false
-      }).addTo(map);
-      circle.__facilityRadiusLayer = true;
-      facilityRings.push(circle);
-
-      const pos = destinationPoint2(lat, lon, d.m, 90);
-      const label = L.marker(pos, {
-        interactive:false,
-        icon:L.divIcon({
-          className:'search-radius-label',
-          html:d.label,
-          iconSize:null
-        })
-      }).addTo(map);
-      label.__facilityRadiusLabel = true;
-      facilityRingLabels.push(label);
-    });
-  }
-
-  function isAddressSearchMarker(marker){
-    const el = marker && marker.getElement ? marker.getElement() : null;
-    const inner = el ? String(el.innerHTML || '') : '';
-    return inner.includes('search-address-marker');
-  }
-
-  function patchMarkerClick(marker){
-    if(!marker || marker.__facilityTogglePatched) return;
-    if(isAddressSearchMarker(marker)) return;
-
-    marker.__facilityTogglePatched = true;
-
-    marker.on('click', function(){
-      const ll = marker.getLatLng ? marker.getLatLng() : null;
-      if(!ll) return;
-
-      if(activeFacilityMarker === marker){
-        if(marker.__selectedOnce){
-          clearFacilitySelection();
-          marker.__selectedOnce = false;
-          return;
-        }
-      }
-      marker.__selectedOnce = true
-
-      clearFacilitySelection();
-      activeFacilityMarker = marker;
-
-      // 元HTML側の円が後から描かれる場合があるため、少し待ってから一度掃除→自前円描画
-      setTimeout(function(){
-        const targets = [];
-        map.eachLayer(function(layer){
-          if(isManagedRadiusLayer(layer)) targets.push(layer);
-        });
-        targets.forEach(layer=>{try{map.removeLayer(layer)}catch(e){}});
-        drawFacilityRings(ll.lat, ll.lng);
-        try{
-          if(marker.openPopup){ marker.openPopup(); }
-        }catch(e){}
-      }, 80);
-    });
-  }
-
-  function patchAllMarkers(){
-    if(typeof map === 'undefined' || typeof L === 'undefined') return;
-    map.eachLayer(function(layer){
-      if(layer instanceof L.Marker){
-        patchMarkerClick(layer);
-      }
-    });
-  }
-
-  document.addEventListener('DOMContentLoaded', function(){
-    setTimeout(patchAllMarkers, 800);
-    setTimeout(patchAllMarkers, 2000);
-  });
-
-  setInterval(patchAllMarkers, 2500);
-})();
+/* 施設再タップ時の青丸消去は makeMarker() 側で制御 */
 </script>
+
 
 
 <script>
