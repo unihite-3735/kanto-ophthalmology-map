@@ -475,6 +475,7 @@ initSelects();render(DATA);
   let addressSearchMarker = null;
   let addressSearchRings = [];
   let addressSearchLabels = [];
+  let addressSearchNonce = 0;
 
   function isProbablyAddress(q){
     if(!q) return false;
@@ -529,6 +530,7 @@ initSelects();render(DATA);
   }
 
   function clearAddressSearch(){
+    addressSearchNonce++;
     if(typeof map === 'undefined') return;
     if(addressSearchMarker){
       try{ map.removeLayer(addressSearchMarker); }catch(e){}
@@ -538,7 +540,23 @@ initSelects();render(DATA);
     addressSearchLabels.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
     addressSearchRings = [];
     addressSearchLabels = [];
+
+    // 念のため、配列参照から漏れた住所検索レイヤーも地図上から直接除去する
+    try{
+      map.eachLayer(function(layer){
+        const el = layer && typeof layer.getElement === 'function' ? layer.getElement() : null;
+        const hasAddressMarker = el && el.querySelector && el.querySelector('.search-address-marker');
+        const hasAddressLabel = el && el.classList && el.classList.contains('search-radius-label');
+        const isAddressCircle = layer && layer.options && layer.options._addressSearchCircle === true;
+        if(hasAddressMarker || hasAddressLabel || isAddressCircle){
+          try{ map.removeLayer(layer); }catch(e){}
+        }
+      });
+    }catch(e){}
   }
+
+  // リセットボタンからも住所検索ピン・円を消せるように外部公開
+  window.clearAddressSearchLayers = clearAddressSearch;
 
   function destinationPoint(lat, lon, distanceMeters, bearingDeg){
     const R = 6378137;
@@ -568,7 +586,8 @@ initSelects();render(DATA);
         dashArray:d.dash,
         fill:false,
         opacity:.85,
-        interactive:false
+        interactive:false,
+        _addressSearchCircle:true
       }).addTo(map);
       addressSearchRings.push(circle);
 
@@ -610,7 +629,7 @@ initSelects();render(DATA);
     map.setView([lat, lon], 16);
   }
 
-  async function geocodeGSI(q){
+  async function geocodeGSI(q, token){
     const queries = makeAddressQueries(q);
     for(const query of queries){
       try{
@@ -622,6 +641,7 @@ initSelects();render(DATA);
           const lon = arr[0].geometry.coordinates[0];
           const lat = arr[0].geometry.coordinates[1];
           const title = arr[0].properties && arr[0].properties.title ? arr[0].properties.title : query;
+          if(token !== addressSearchNonce) return false;
           addAddressMarker(lat, lon, title);
           return true;
         }
@@ -632,7 +652,7 @@ initSelects();render(DATA);
     return false;
   }
 
-  async function geocodeNominatim(q){
+  async function geocodeNominatim(q, token){
     const queries = makeAddressQueries(q);
     for(const query of queries){
       try{
@@ -642,6 +662,7 @@ initSelects();render(DATA);
         const arr = await res.json();
         if(arr && arr.length){
           const hit = arr[0];
+          if(token !== addressSearchNonce) return false;
           addAddressMarker(parseFloat(hit.lat), parseFloat(hit.lon), hit.display_name || query);
           return true;
         }
@@ -652,10 +673,11 @@ initSelects();render(DATA);
     return false;
   }
 
-  async function geocodeAddress(q){
+  async function geocodeAddress(q, token){
     // 日本住所は国土地理院を優先。ダメならNominatim。
-    if(await geocodeGSI(q)) return true;
-    if(await geocodeNominatim(q)) return true;
+    if(await geocodeGSI(q, token)) return true;
+    if(token !== addressSearchNonce) return false;
+    if(await geocodeNominatim(q, token)) return true;
     return false;
   }
 
@@ -669,7 +691,9 @@ initSelects();render(DATA);
     }
 
     if(isProbablyAddress(q)){
-      const ok = await geocodeAddress(q);
+      const token = ++addressSearchNonce;
+      const ok = await geocodeAddress(q, token);
+      if(token !== addressSearchNonce) return;
       if(!ok){
         alert('住所検索に失敗しました。番地を少し省略して「千葉県柏市十余二」などで試してください。');
       }
@@ -687,6 +711,21 @@ initSelects();render(DATA);
       });
     }
   });
+})();
+</script>
+
+<script>
+// リセット時に住所検索ピン・住所検索の半径円も消す
+(function(){
+  const originalResetFilter = window.resetFilter;
+  window.resetFilter = function(){
+    if(typeof originalResetFilter === 'function'){
+      originalResetFilter.apply(this, arguments);
+    }
+    if(typeof window.clearAddressSearchLayers === 'function'){
+      window.clearAddressSearchLayers();
+    }
+  };
 })();
 </script>
 
