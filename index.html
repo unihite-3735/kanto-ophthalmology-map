@@ -572,4 +572,112 @@ function toggleLegend(){
 })();
 </script>
 
+
+<script>
+(function(){
+  let activeFacilityMarker = null;
+  let facilityRings = [];
+  let facilityRingLabels = [];
+
+  function clearFacilitySelection(){
+    if(typeof map === 'undefined') return;
+    facilityRings.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
+    facilityRingLabels.forEach(x=>{try{map.removeLayer(x)}catch(e){}});
+    facilityRings = [];
+    facilityRingLabels = [];
+    try{ map.closePopup(); }catch(e){}
+    activeFacilityMarker = null;
+  }
+
+  function destinationPoint2(lat, lon, distanceMeters, bearingDeg){
+    const R = 6378137;
+    const brng = bearingDeg * Math.PI / 180;
+    const phi1 = lat * Math.PI / 180;
+    const lambda1 = lon * Math.PI / 180;
+    const d = distanceMeters / R;
+    const phi2 = Math.asin(Math.sin(phi1)*Math.cos(d) + Math.cos(phi1)*Math.sin(d)*Math.cos(brng));
+    const lambda2 = lambda1 + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(phi1), Math.cos(d)-Math.sin(phi1)*Math.sin(phi2));
+    return [phi2*180/Math.PI, lambda2*180/Math.PI];
+  }
+
+  function drawFacilityRings(lat, lon){
+    if(typeof L === 'undefined' || typeof map === 'undefined') return;
+    const defs = [
+      {m:500, label:'500m', color:'#2563eb', dash:'6 6'},
+      {m:1000, label:'1km', color:'#111827', dash:null},
+      {m:2000, label:'2km', color:'#111827', dash:null},
+      {m:3000, label:'3km', color:'#111827', dash:null}
+    ];
+    defs.forEach(d=>{
+      const circle = L.circle([lat,lon], {
+        radius:d.m,
+        color:d.color,
+        weight:d.m===500 ? 3 : 2,
+        dashArray:d.dash,
+        fill:false,
+        opacity:.75,
+        interactive:false
+      }).addTo(map);
+      facilityRings.push(circle);
+
+      const pos = destinationPoint2(lat, lon, d.m, 90);
+      const label = L.marker(pos, {
+        interactive:false,
+        icon:L.divIcon({
+          className:'search-radius-label',
+          html:d.label,
+          iconSize:null
+        })
+      }).addTo(map);
+      facilityRingLabels.push(label);
+    });
+  }
+
+  function patchMarkerClick(marker){
+    if(!marker || marker.__facilityTogglePatched) return;
+    marker.__facilityTogglePatched = true;
+
+    marker.on('click', function(e){
+      const ll = marker.getLatLng ? marker.getLatLng() : null;
+      if(!ll) return;
+
+      // 同じ施設を再タップしたら、ポップアップ＋円を消して未選択状態にする
+      if(activeFacilityMarker === marker){
+        clearFacilitySelection();
+        return;
+      }
+
+      // 別施設を押したら前の円を消して、新しい円を表示
+      clearFacilitySelection();
+      activeFacilityMarker = marker;
+
+      setTimeout(function(){
+        drawFacilityRings(ll.lat, ll.lng);
+      }, 0);
+    });
+  }
+
+  function patchAllMarkers(){
+    if(typeof map === 'undefined' || typeof L === 'undefined') return;
+    map.eachLayer(function(layer){
+      if(layer instanceof L.Marker){
+        // 住所検索ピンは別ロジックがあるので対象外
+        const el = layer.getElement && layer.getElement();
+        const html = el ? el.innerHTML : '';
+        if(html && html.indexOf('search-address-marker') >= 0) return;
+        patchMarkerClick(layer);
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(patchAllMarkers, 1000);
+    setTimeout(patchAllMarkers, 2500);
+  });
+
+  // フィルター・ズーム後にマーカーが再生成されることがあるため定期的に軽く再適用
+  setInterval(patchAllMarkers, 3000);
+})();
+</script>
+
 </body></html>
